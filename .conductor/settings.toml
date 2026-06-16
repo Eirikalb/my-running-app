@@ -1,0 +1,20 @@
+#:schema https://conductor.build/schemas/settings.repo.schema.json
+
+# Shared Conductor config for PacePlaylist (Next.js).
+# Personal/machine overrides live in .conductor/settings.local.toml (gitignored).
+
+[scripts]
+# Reproducible, non-interactive install from package-lock.json.
+setup = "npm ci"
+
+# Next.js dev server on this workspace's assigned port so multiple
+# workspaces can run side by side without colliding.
+run = "npm run dev -- -p $CONDUCTOR_PORT"
+
+# Each workspace gets its own port and shares no local state (no DB/services),
+# so workspaces are safe to run at the same time.
+run_mode = "concurrent"
+
+# Drop the workspace-local Next.js build cache before archiving. Safe and
+# scoped to this worktree only.
+archive = "rm -rf .next"

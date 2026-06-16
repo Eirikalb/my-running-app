@@ -1,0 +1,11 @@
+/node_modules
+/.next
+/out
+.env
+.env.local
+.DS_Store
+*.log
+
+# Conductor (machine-local / scratch)
+.conductor/settings.local.toml
+/.context/

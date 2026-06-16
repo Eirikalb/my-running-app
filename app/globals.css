@@ -1,0 +1,61 @@
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:'Space Grotesk',-apple-system,BlinkMacSystemFont,sans-serif;
+}
+.mono{font-family:'IBM Plex Mono',monospace}
+
+:root{
+  --bg:oklch(0.16 0.008 70); --panel:oklch(0.205 0.009 75); --panel-2:oklch(0.25 0.01 75);
+  --hover:oklch(0.29 0.01 75); --row-cur:oklch(0.27 0.012 75); --inset:oklch(0.135 0.008 70);
+  --text:oklch(0.96 0.006 85); --text-2:oklch(0.85 0.008 85); --muted:oklch(0.66 0.012 85);
+  --muted-2:oklch(0.6 0.012 85); --faint:oklch(0.52 0.01 85);
+  --border:rgba(255,255,255,0.08); --border-2:rgba(255,255,255,0.12); --border-soft:rgba(255,255,255,0.06);
+  --ring:rgba(255,255,255,0.1); --grid:rgba(255,255,255,0.06); --ridge:rgba(255,255,255,0.5);
+  --chip:rgba(20,19,15,0.72); --backdrop:rgba(10,9,7,0.62); --shadow:0 18px 50px rgba(0,0,0,0.4);
+  --scroll:rgba(255,255,255,0.14);
+  --accent:oklch(0.72 0.17 45); --accent-hi:oklch(0.77 0.17 45); --on-accent:oklch(0.17 0.03 45);
+  --blue:oklch(0.78 0.13 200); --blue-text:oklch(0.82 0.1 200); --blue-bg:oklch(0.78 0.13 200 / 0.14); --blue-bd:oklch(0.78 0.13 200 / 0.3);
+  --good:oklch(0.82 0.15 150); --good-bg:oklch(0.82 0.15 150 / 0.16);
+  --warn:oklch(0.84 0.13 85); --warn-bg:oklch(0.84 0.13 85 / 0.16);
+  --bad:oklch(0.7 0.18 25); --bad-bg:oklch(0.7 0.18 25 / 0.16);
+  --green:oklch(0.75 0.16 150); --on-green:oklch(0.18 0.04 150);
+}
+[data-app="light"]{
+  --bg:oklch(0.95 0.005 90); --panel:oklch(0.995 0.002 90); --panel-2:oklch(0.93 0.006 90);
+  --hover:oklch(0.9 0.008 90); --row-cur:oklch(0.95 0.014 75); --inset:oklch(0.915 0.006 90);
+  --text:oklch(0.25 0.012 75); --text-2:oklch(0.36 0.012 75); --muted:oklch(0.47 0.012 75);
+  --muted-2:oklch(0.54 0.012 75); --faint:oklch(0.64 0.01 75);
+  --border:rgba(0,0,0,0.1); --border-2:rgba(0,0,0,0.15); --border-soft:rgba(0,0,0,0.06);
+  --ring:rgba(0,0,0,0.1); --grid:rgba(0,0,0,0.07); --ridge:rgba(0,0,0,0.38);
+  --chip:rgba(255,255,255,0.86); --backdrop:rgba(45,42,38,0.4); --shadow:0 18px 50px rgba(0,0,0,0.13);
+  --scroll:rgba(0,0,0,0.2);
+  --blue-text:oklch(0.48 0.14 250); --blue-bg:oklch(0.6 0.14 245 / 0.12); --blue-bd:oklch(0.55 0.14 245 / 0.35);
+  --good:oklch(0.5 0.15 150); --good-bg:oklch(0.6 0.16 150 / 0.16);
+  --warn:oklch(0.52 0.12 70); --warn-bg:oklch(0.72 0.13 80 / 0.22);
+  --bad:oklch(0.53 0.2 25); --bad-bg:oklch(0.62 0.2 25 / 0.13);
+}
+
+@keyframes pulsering{0%{transform:scale(0.7);opacity:0.7}70%{transform:scale(2.4);opacity:0}100%{opacity:0}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--muted);border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite}
+
+.leaflet-container{background:var(--bg)!important;font-family:'Space Grotesk',sans-serif}
+.leaflet-control-attribution{background:var(--chip)!important;color:var(--muted-2)!important}
+.leaflet-control-attribution a{color:var(--muted)!important}
+.leaflet-bar a{background:var(--panel)!important;color:var(--text)!important;border-color:var(--border)!important}
+.leaflet-tooltip{background:var(--panel)!important;border:1px solid var(--border-2)!important;color:var(--text)!important;font-family:'IBM Plex Mono',monospace!important;font-size:11px!important;box-shadow:0 6px 20px rgba(0,0,0,0.3)!important}
+.leaflet-tooltip-top:before{border-top-color:var(--panel)!important}
+
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
+
+button{font-family:'Space Grotesk',sans-serif}
+input[type=range]{accent-color:var(--accent)}
+.btn-hover:hover{background:var(--hover)!important}
+.iconbtn{display:flex;align-items:center;justify-content:center;border-radius:10px;border:1px solid var(--border-2);background:var(--panel-2);color:var(--text);cursor:pointer}
+.iconbtn:hover{background:var(--hover)}
+.arttile:hover .art-ov{opacity:1!important}
