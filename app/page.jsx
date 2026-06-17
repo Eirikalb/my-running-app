@@ -9,6 +9,24 @@ import {
   artStyle, monoOf, hueOf,
 } from "../lib/runplan";
 
+// Persist a freshly-detected BPM to the local index (cache-on-detect), so the
+// index grows for free from real usage. Fire-and-forget — never blocks the UI.
+function cacheBpm(track, preview, bpm) {
+  fetch("/api/bpm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: track.name,
+      artist: track.artist,
+      bpm,
+      itunesId: preview?.itunesId ?? null,
+      durationMs: preview?.durationMs ?? track.durationMs ?? null,
+      previewUrl: preview?.previewUrl ?? null,
+      art: preview?.art ?? track.art ?? null,
+    }),
+  }).catch(() => {});
+}
+
 const MapView = dynamic(() => import("../components/MapView"), {
   ssr: false,
   loading: () => <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--muted)" }}>Loading map…</div>,
@@ -24,7 +42,7 @@ const MATCH_BG = { good: "var(--good-bg)", warn: "var(--warn-bg)", bad: "var(--b
 export default function Page() {
   const [route, setRoute] = useState(null); // {name, points, totalDist, elevGain}
   const [paceSec, setPaceSec] = useState(330);
-  const [perfectBpm, setPerfectBpm] = useState(170);
+  const [perfectBpm, setPerfectBpm] = useState(180);
   const [playlist, setPlaylist] = useState([]);
   const [currentDist, setCurrentDist] = useState(0);
   const [hoverDist, setHoverDist] = useState(null);
@@ -104,7 +122,7 @@ export default function Page() {
   // ---- playlist ops ----
   function addSong(track) {
     const item = {
-      ...track, id: newId(), spotifyId: track.spotifyId || track.id,
+      ...track, id: newId(), spotifyId: track.spotifyId ?? null,
       bpm: track.bpm ?? null, previewUrl: track.previewUrl || null, bpmLoading: false,
     };
     setPlaylist((p) => [...p, item]);
@@ -123,8 +141,11 @@ export default function Page() {
     try {
       const r = await fetch(`/api/preview?title=${encodeURIComponent(item.name)}&artist=${encodeURIComponent(item.artist)}`);
       const data = await r.json();
-      let bpm = null;
-      if (data.previewUrl) bpm = await detectBpmFromUrl(data.previewUrl);
+      let bpm = data.cachedBpm ?? null;
+      if (bpm == null && data.previewUrl) {
+        bpm = await detectBpmFromUrl(data.previewUrl);
+        if (bpm != null) cacheBpm(item, data, bpm);
+      }
       setPlaylist((p) => p.map((s) => (s.id === item.id ? { ...s, bpm: bpm ?? s.bpm, previewUrl: data.previewUrl || s.previewUrl, bpmLoading: false } : s)));
     } catch {
       setPlaylist((p) => p.map((s) => (s.id === item.id ? { ...s, bpmLoading: false } : s)));
@@ -457,7 +478,8 @@ export default function Page() {
 
       {showSearch && (
         <SearchOverlay perfectBpm={perfectBpm} onAdd={addSong} onClose={() => setShowSearch(false)}
-          isAdded={(key) => playlist.some((s) => s.name + s.artist === key)} />
+          isAdded={(key) => playlist.some((s) => s.name + s.artist === key)}
+          onRemove={(key) => setPlaylist((p) => p.filter((s) => s.name + s.artist !== key))} />
       )}
 
       <audio ref={previewAudio} onEnded={() => setPlayingId(null)} />
@@ -516,18 +538,31 @@ function RowBtn({ title, onClick, d, danger }) {
   );
 }
 
-function SearchOverlay({ perfectBpm, onAdd, onClose, isAdded }) {
+function SearchOverlay({ perfectBpm, onAdd, onClose, isAdded, onRemove }) {
+  const [mode, setMode] = useState("browse"); // "browse" (index) | "search" (Spotify)
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [matchOnly, setMatchOnly] = useState(false);
+  // browse controls
+  const [browseBpm, setBrowseBpm] = useState(perfectBpm);
+  const [genre, setGenre] = useState(null); // null = all
+  const [genreList, setGenreList] = useState([]);
+  const [browseQ, setBrowseQ] = useState(""); // text search over name/artist/album
+  const [sort, setSort] = useState("closeness"); // "closeness" | "popularity"
+  const [playingId, setPlayingId] = useState(null);
   const inputRef = useRef(null);
   const timer = useRef(null);
+  const audioRef = useRef(null);
 
-  useEffect(() => { setTimeout(() => inputRef.current?.focus(), 30); }, []);
+  const target = mode === "browse" ? browseBpm : perfectBpm;
 
+  useEffect(() => { if (mode === "search") setTimeout(() => inputRef.current?.focus(), 30); }, [mode]);
+
+  // ---- Spotify text search (main) ----
   useEffect(() => {
+    if (mode !== "search") return;
     clearTimeout(timer.current);
     if (!query.trim()) { setResults([]); setError(null); return; }
     timer.current = setTimeout(async () => {
@@ -536,48 +571,147 @@ function SearchOverlay({ perfectBpm, onAdd, onClose, isAdded }) {
         const r = await fetch(`/api/spotify/search?q=${encodeURIComponent(query)}`);
         const data = await r.json();
         if (!r.ok) throw new Error(data.error || "Search failed");
-        const items = (data.items || []).map((t) => ({ ...t, key: t.name + t.artist, bpm: undefined }));
+        const items = (data.items || []).map((t) => ({ ...t, spotifyId: t.id, key: t.name + t.artist, bpm: undefined }));
         setResults(items);
         items.forEach(detectOne); // auto-fill BPM so match badges populate
       } catch (err) { setError(err.message); setResults([]); }
       finally { setLoading(false); }
     }, 350);
     return () => clearTimeout(timer.current);
-  }, [query]);
+  }, [query, mode]);
+
+  // ---- Browse the index by genre + cadence (sorted by closeness) ----
+  useEffect(() => {
+    if (mode !== "browse") return;
+    let cancelled = false;
+    setLoading(true); setError(null);
+    const url = `/api/bpm/search?bpm=${browseBpm}&limit=150`
+      + (genre ? `&genre=${encodeURIComponent(genre)}` : "")
+      + (browseQ.trim() ? `&q=${encodeURIComponent(browseQ.trim())}` : "")
+      + (sort === "popularity" ? "&sort=popularity" : "")
+      + (matchOnly ? "&within=3" : "");
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(url);
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || "Browse failed");
+        if (cancelled) return;
+        setGenreList(data.genres || []);
+        setResults((data.items || []).map((it) => ({
+          id: "idx" + it.id, key: it.title + it.artist,
+          name: it.title, artist: it.artist, durationMs: it.duration_ms,
+          art: it.art_url, previewUrl: it.preview_url, bpm: it.bpm,
+          spotifyId: it.spotify_id || null, popularity: it.popularity ?? null,
+        })));
+      } catch (err) { if (!cancelled) { setError(err.message); setResults([]); } }
+      finally { if (!cancelled) setLoading(false); }
+    }, 180);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [mode, browseBpm, genre, matchOnly, browseQ, sort]);
+
+  async function playPreview(track) {
+    const el = audioRef.current;
+    if (!el) return;
+    if (playingId === track.id) { el.pause(); setPlayingId(null); return; }
+    let url = track.previewUrl;
+    if (!url) {
+      try {
+        const r = await fetch(`/api/preview?title=${encodeURIComponent(track.name)}&artist=${encodeURIComponent(track.artist)}`);
+        url = (await r.json()).previewUrl;
+      } catch {}
+    }
+    if (!url) return;
+    el.src = url;
+    try { await el.play(); setPlayingId(track.id); } catch { setPlayingId(null); }
+  }
 
   async function detectOne(track) {
     try {
       const pr = await fetch(`/api/preview?title=${encodeURIComponent(track.name)}&artist=${encodeURIComponent(track.artist)}`);
       const data = await pr.json();
-      let bpm = null;
-      if (data.previewUrl) bpm = await detectBpmFromUrl(data.previewUrl);
+      let bpm = data.cachedBpm ?? null;
+      if (bpm == null && data.previewUrl) {
+        bpm = await detectBpmFromUrl(data.previewUrl);
+        if (bpm != null) cacheBpm(track, data, bpm);
+      }
       setResults((rs) => rs.map((r) => (r.id === track.id ? { ...r, bpm, previewUrl: data.previewUrl || null } : r)));
     } catch {
       setResults((rs) => rs.map((r) => (r.id === track.id ? { ...r, bpm: null } : r)));
     }
   }
 
-  const shown = matchOnly ? results.filter((r) => matchOf(r.bpm, perfectBpm).level === "good") : results;
+  // Browse filters server-side; search filters client-side.
+  const shown = mode === "search" && matchOnly
+    ? results.filter((r) => matchOf(r.bpm, target).level === "good")
+    : results;
+  const totalIndexed = genreList.reduce((a, g) => a + g.n, 0);
+
+  const Tab = ({ id, label }) => (
+    <button onClick={() => { setMode(id); setResults([]); setError(null); }}
+      style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid " + (mode === id ? "transparent" : "var(--border-2)"), background: mode === id ? "var(--accent)" : "transparent", color: mode === id ? "var(--on-accent)" : "var(--muted)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+      {label}
+    </button>
+  );
 
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "var(--backdrop)", backdropFilter: "blur(8px)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "64px 24px" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 920, maxHeight: "calc(100vh - 128px)", display: "flex", flexDirection: "column", borderRadius: 20, border: "1px solid var(--border-2)", background: "var(--panel)", boxShadow: "0 40px 120px rgba(0,0,0,0.45)", overflow: "hidden" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "18px 22px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, padding: "12px 15px", borderRadius: 12, background: "var(--inset)", border: "1px solid var(--border-2)" }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="7" stroke="var(--muted-2)" strokeWidth="2" /><path d="M20 20l-3.5-3.5" stroke="var(--muted-2)" strokeWidth="2" strokeLinecap="round" /></svg>
-            <input ref={inputRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search songs, artists…" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontFamily: "'Space Grotesk'", fontSize: 16 }} />
-            {loading && <span className="spin" />}
-          </div>
-          <button className="iconbtn btn-hover" onClick={onClose} style={{ width: 42, height: 42, borderRadius: 11 }}>
+        {/* tabs + close */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 22px", borderBottom: "1px solid var(--border)" }}>
+          <Tab id="browse" label="Browse catalogue" />
+          <Tab id="search" label="Search Spotify" />
+          <div style={{ flex: 1 }} />
+          <button className="iconbtn btn-hover" onClick={onClose} style={{ width: 40, height: 40, borderRadius: 11 }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /></svg>
           </button>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 22px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 13px", borderRadius: 10, background: "var(--blue-bg)", border: "1px solid var(--blue-bd)" }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--blue)" }} />
-            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--blue-text)" }}>Matching to {perfectBpm} BPM</span>
+        {/* search input (search mode only) */}
+        {mode === "search" && (
+          <div style={{ padding: "16px 22px 0" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 15px", borderRadius: 12, background: "var(--inset)", border: "1px solid var(--border-2)" }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="7" stroke="var(--muted-2)" strokeWidth="2" /><path d="M20 20l-3.5-3.5" stroke="var(--muted-2)" strokeWidth="2" strokeLinecap="round" /></svg>
+              <input ref={inputRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search songs, artists…" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontFamily: "'Space Grotesk'", fontSize: 16 }} />
+              {loading && <span className="spin" />}
+            </div>
           </div>
+        )}
+
+        {/* controls row */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "14px 22px", borderBottom: "1px solid var(--border)" }}>
+          {mode === "browse" ? (
+            <>
+              {/* catalogue text search (name / artist / album) */}
+              <div style={{ display: "flex", alignItems: "center", gap: 9, flex: "1 1 220px", minWidth: 180, padding: "8px 13px", borderRadius: 10, background: "var(--inset)", border: "1px solid var(--border-2)" }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="7" stroke="var(--muted-2)" strokeWidth="2" /><path d="M20 20l-3.5-3.5" stroke="var(--muted-2)" strokeWidth="2" strokeLinecap="round" /></svg>
+                <input value={browseQ} onChange={(e) => setBrowseQ(e.target.value)} placeholder="Search name, artist, album…" style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontFamily: "'Space Grotesk'", fontSize: 14 }} />
+                {browseQ && <button onClick={() => setBrowseQ("")} title="Clear" style={{ background: "none", border: "none", color: "var(--muted-2)", cursor: "pointer", padding: 0, display: "flex" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /></svg></button>}
+              </div>
+              {/* genre chips */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <GenreChip label="All" active={genre == null} onClick={() => setGenre(null)} />
+                {genreList.map((g) => (
+                  <GenreChip key={g.genre} label={`${g.genre} (${g.n})`} active={genre === g.genre} onClick={() => setGenre(g.genre)} />
+                ))}
+              </div>
+              {/* bpm slider */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 13px", borderRadius: 10, background: "var(--blue-bg)", border: "1px solid var(--blue-bd)" }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--blue-text)" }}>BPM</span>
+                <input type="range" min="120" max="205" step="1" value={browseBpm} onChange={(e) => setBrowseBpm(+e.target.value)} style={{ width: 120, accentColor: "var(--blue)", height: 4, cursor: "pointer" }} />
+                <span className="mono" style={{ fontSize: 14, fontWeight: 600, color: "var(--blue-text)", width: 30 }}>{browseBpm}</span>
+              </div>
+              {/* sort */}
+              <div style={{ display: "flex", alignItems: "center", gap: 3, padding: 3, borderRadius: 10, background: "var(--inset)", border: "1px solid var(--border-2)" }}>
+                <SortBtn label="Best match" active={sort === "closeness"} onClick={() => setSort("closeness")} />
+                <SortBtn label="Popular" active={sort === "popularity"} onClick={() => setSort("popularity")} />
+              </div>
+            </>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 13px", borderRadius: 10, background: "var(--blue-bg)", border: "1px solid var(--blue-bd)" }}>
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--blue)" }} />
+              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--blue-text)" }}>Matching to {perfectBpm} BPM</span>
+            </div>
+          )}
           <button onClick={() => setMatchOnly((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 9, padding: "8px 12px", borderRadius: 10, border: "1px solid var(--border-2)", background: "transparent", color: "var(--muted)", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
             <span style={{ width: 18, height: 18, borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center", background: matchOnly ? "var(--accent)" : "transparent", border: matchOnly ? "none" : "1.5px solid var(--border-2)" }}>
               {matchOnly && <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4L19 6" stroke="var(--on-accent)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>}
@@ -590,35 +724,84 @@ function SearchOverlay({ perfectBpm, onAdd, onClose, isAdded }) {
 
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 22px 22px" }}>
           {error && <div style={{ color: "var(--bad)", fontSize: 13, padding: 12 }}>{error}</div>}
-          {!error && !results.length && <div style={{ color: "var(--muted)", fontSize: 13, textAlign: "center", padding: 24 }}>{query.trim() ? "No results." : "Type to search Spotify."}</div>}
+          {!error && !results.length && !loading && (
+            <div style={{ color: "var(--muted)", fontSize: 13, textAlign: "center", padding: 24 }}>
+              {mode === "search"
+                ? (query.trim() ? "No results." : "Type to search Spotify.")
+                : (totalIndexed ? "No tracks match — widen the BPM or turn off “good matches only.”" : "The catalogue is empty — run npm run crawl to build the index.")}
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             {shown.map((r) => {
-              const m = matchOf(r.bpm, perfectBpm);
+              const m = matchOf(r.bpm, target);
               const added = isAdded(r.key);
               return (
-                <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: 10, borderRadius: 13, background: "var(--inset)", border: "1px solid var(--border-soft)" }}>
-                  <div style={artStyle(r.art, 52, 9, hueOf(r.name + r.artist), 16)}>{r.art ? "" : monoOf(r.name)}</div>
+                <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, overflow: "hidden", padding: 10, borderRadius: 13, background: "var(--inset)", border: "1px solid var(--border-soft)" }}>
+                  <ArtTile song={r} size={52} radius={9} fontSize={16} playing={playingId === r.id} onClick={() => playPreview(r)} />
                   <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
                     <span style={{ fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
                     <span style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.artist} · {formatT(r.durationMs / 1000)}</span>
                   </div>
+                  {r.popularity != null && (
+                    <div title="Popularity (0–100, via Deezer)" className="mono" style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, fontWeight: 600, color: "var(--muted)", flexShrink: 0 }}>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M4 19V10M10 19V5M16 19v-7M22 19h-21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+                      {r.popularity}
+                    </div>
+                  )}
                   <div style={{ minWidth: 34, textAlign: "center", padding: "3px 7px", borderRadius: 7, fontSize: 12, fontWeight: 600, color: MATCH_C[m.level], background: MATCH_BG[m.level], flexShrink: 0 }} className="mono">
                     {r.bpm === undefined ? <span className="spin" /> : r.bpm ?? "—"}
                   </div>
-                  <button onClick={(e) => { e.stopPropagation(); onAdd(r); }} disabled={added}
-                    style={{ width: 38, height: 38, borderRadius: 10, border: "none", cursor: added ? "default" : "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: added ? "var(--green)" : "var(--accent)", color: added ? "var(--on-green)" : "var(--on-accent)" }}>
-                    {added ? (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4L19 6" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                    ) : (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" /></svg>
-                    )}
-                  </button>
+                  <AddRemoveButton added={added} onAdd={() => onAdd(r)} onRemove={() => onRemove(r.key)} />
                 </div>
               );
             })}
           </div>
         </div>
+        <audio ref={audioRef} onEnded={() => setPlayingId(null)} />
       </div>
     </div>
+  );
+}
+
+function SortBtn({ label, active, onClick }) {
+  return (
+    <button onClick={onClick}
+      style={{ padding: "6px 11px", borderRadius: 8, border: "none", background: active ? "var(--accent)" : "transparent", color: active ? "var(--on-accent)" : "var(--muted)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+      {label}
+    </button>
+  );
+}
+
+function AddRemoveButton({ added, onAdd, onRemove }) {
+  const [hover, setHover] = useState(false);
+  const base = { width: 38, height: 38, borderRadius: 10, border: "none", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" };
+  if (!added) {
+    return (
+      <button title="Add to playlist" onClick={(e) => { e.stopPropagation(); onAdd(); }}
+        style={{ ...base, background: "var(--accent)", color: "var(--on-accent)" }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" /></svg>
+      </button>
+    );
+  }
+  // In the playlist → click to remove (✕ on hover).
+  return (
+    <button title="Remove from playlist" onClick={(e) => { e.stopPropagation(); onRemove(); }}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      style={{ ...base, background: hover ? "var(--bad)" : "var(--green)", color: hover ? "#fff" : "var(--on-green)" }}>
+      {hover ? (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" /></svg>
+      ) : (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4L19 6" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      )}
+    </button>
+  );
+}
+
+function GenreChip({ label, active, onClick }) {
+  return (
+    <button onClick={onClick}
+      style={{ padding: "7px 12px", borderRadius: 9, border: "1px solid " + (active ? "transparent" : "var(--border-2)"), background: active ? "var(--accent)" : "transparent", color: active ? "var(--on-accent)" : "var(--muted)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", textTransform: "capitalize", whiteSpace: "nowrap" }}>
+      {label}
+    </button>
   );
 }
