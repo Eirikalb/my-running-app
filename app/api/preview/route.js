@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getByName } from "../../../lib/neon.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -19,9 +20,17 @@ export async function GET(request) {
     const data = await res.json();
     const hit = (data.results || []).find((r) => r.previewUrl);
     if (!hit) return NextResponse.json({ error: "No preview found for this track", previewUrl: null });
+
+    // If we've already analyzed this track, hand back the cached BPM so the
+    // client can skip downloading + decoding the preview entirely.
+    const cached = await getByName(hit.artistName, hit.trackName);
     return NextResponse.json({
       previewUrl: hit.previewUrl,
       matched: { title: hit.trackName, artist: hit.artistName },
+      itunesId: hit.trackId,
+      durationMs: hit.trackTimeMillis,
+      art: hit.artworkUrl100 || hit.artworkUrl60 || null,
+      cachedBpm: cached?.bpm ?? null,
     });
   } catch (err) {
     return NextResponse.json({ error: String(err.message || err) }, { status: 502 });

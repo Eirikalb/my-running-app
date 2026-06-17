@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { searchTracks, spotifyConfigured } from "../../../../lib/spotify";
+import { searchTracks, spotifyConfigured } from "../../../../lib/spotify.mjs";
 
 export const dynamic = "force-dynamic";
 
