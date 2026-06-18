@@ -61,6 +61,14 @@ export default function Page() {
   const playTimer = useRef(null);
   const trackRef = useRef(null);
   const dragging = useRef(false);
+  // Two audio "decks" for crossfading song previews while the transport plays.
+  const deckA = useRef(null);
+  const deckB = useRef(null);
+  const activeDeck = useRef("A");
+  const fadeTimer = useRef(null);
+  const transportSongId = useRef(null);
+  const previewCache = useRef({});
+  const fadeLeadRef = useRef(0); // metres of playback covered in one 1s fade (lookahead)
 
   const total = route?.totalDist || 0;
   const points = route?.points || [];
@@ -159,6 +167,7 @@ export default function Page() {
     const el = previewAudio.current;
     if (!el) return;
     if (playingId === song.id) { el.pause(); setPlayingId(null); return; }
+    if (playing) { clearInterval(playTimer.current); setPlaying(false); stopDecks(); } // don't double up with the route player
     try {
       let url = song.previewUrl;
       if (!url) {
@@ -171,22 +180,97 @@ export default function Page() {
     } catch (err) { setPlayingId(null); alert(`Couldn't play preview: ${err.message || err}`); }
   }
 
-  // ---- transport (animate the runner along the route) ----
+  // ---- transport (animate the runner along the route + crossfade previews) ----
+  async function previewUrlFor(song) {
+    if (!song) return null;
+    if (song.previewUrl) return song.previewUrl;
+    if (previewCache.current[song.id]) return previewCache.current[song.id];
+    try {
+      const r = await fetch(`/api/preview?title=${encodeURIComponent(song.name)}&artist=${encodeURIComponent(song.artist)}`);
+      const url = (await r.json()).previewUrl || null;
+      if (url) previewCache.current[song.id] = url;
+      return url;
+    } catch { return null; }
+  }
+
+  // Ramp `inEl` up to full and `outEl` down to silence over `ms`, then pause outEl.
+  function rampVolumes(outEl, inEl, ms = 1000) {
+    clearInterval(fadeTimer.current);
+    const steps = 20, dt = ms / steps;
+    const startOut = outEl ? outEl.volume : 0;
+    let i = 0;
+    fadeTimer.current = setInterval(() => {
+      i++;
+      const f = i / steps;
+      if (inEl) inEl.volume = Math.min(1, f);
+      if (outEl) outEl.volume = Math.max(0, startOut * (1 - f));
+      if (i >= steps) {
+        clearInterval(fadeTimer.current);
+        if (outEl) { try { outEl.pause(); } catch {} }
+      }
+    }, dt);
+  }
+
+  function stopDecks() {
+    clearInterval(fadeTimer.current);
+    for (const d of [deckA.current, deckB.current]) {
+      if (d) { try { d.pause(); } catch {} d.volume = 1; }
+    }
+    transportSongId.current = null;
+  }
+
+  // Crossfade the decks over 1s from the current song to `song` (or to silence).
+  async function crossfadeTo(song) {
+    const url = await previewUrlFor(song);
+    const cur = activeDeck.current === "A" ? deckA.current : deckB.current;
+    const nxt = activeDeck.current === "A" ? deckB.current : deckA.current;
+    if (!url || !nxt) { rampVolumes(cur, null, 1000); return; } // no preview → just fade out
+    try {
+      nxt.src = url; nxt.currentTime = 0; nxt.volume = 0;
+      await nxt.play();
+    } catch { return; }
+    rampVolumes(cur, nxt, 1000);
+    activeDeck.current = activeDeck.current === "A" ? "B" : "A";
+  }
+
   function togglePlay() {
     if (!route) return;
-    if (playing) { clearInterval(playTimer.current); setPlaying(false); return; }
+    if (playing) { clearInterval(playTimer.current); setPlaying(false); stopDecks(); return; }
     if (currentDist >= total - 1) setCurrentDist(0);
+    try { previewAudio.current?.pause(); } catch {} // stop any single-song preview
+    setPlayingId(null);
+    transportSongId.current = null; // force the first song to fade in
     setPlaying(true);
-    const inc = total / (38 * 20);
+    playlist.forEach((s) => previewUrlFor(s)); // warm the preview cache for gapless crossfades
+    // Play the route at 15× real pace — a 30-min course steps through in ~2 min.
+    const SPEEDUP = 15;
+    const playbackSec = Math.max(8, estSec / SPEEDUP);
+    const inc = total / (playbackSec * 20);
+    fadeLeadRef.current = inc * 20; // 1s of playback ahead, so crossfades finish on the boundary
     playTimer.current = setInterval(() => {
       setCurrentDist((d) => {
         const nd = d + inc;
-        if (nd >= total) { clearInterval(playTimer.current); setPlaying(false); return total; }
+        if (nd >= total) { clearInterval(playTimer.current); setPlaying(false); stopDecks(); return total; }
         return nd;
       });
     }, 50);
   }
-  useEffect(() => () => { clearInterval(playTimer.current); }, []);
+
+  // While playing, look ~1s of playback AHEAD of the playhead and crossfade to
+  // that song, so each fade completes right as the playhead reaches the boundary.
+  useEffect(() => {
+    if (!playing) return;
+    const probe = Math.min(total, currentDist + fadeLeadRef.current);
+    const seg = segs.find((s) => s.draw && probe >= s.cs && probe < s.ce) || null;
+    const id = seg?.song?.id || null;
+    if (id !== transportSongId.current) {
+      transportSongId.current = id;
+      crossfadeTo(seg?.song || null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentDist, playing, segs]);
+
+  useEffect(() => () => { clearInterval(playTimer.current); clearInterval(fadeTimer.current); }, []);
 
   // Follow the browser's color-scheme preference on first load (light if none).
   useEffect(() => {
@@ -491,13 +575,19 @@ export default function Page() {
 
       {showSearch && (
         <SearchOverlay perfectBpm={perfectBpm} onAdd={addSong} onClose={() => setShowSearch(false)}
-          isAdded={(key) => playlist.some((s) => s.name + s.artist === key)}
-          onRemove={(key) => setPlaylist((p) => p.filter((s) => s.name + s.artist !== key))} />
+          addedCount={(key) => playlist.filter((s) => s.name + s.artist === key).length}
+          onRemove={(key) => setPlaylist((p) => {
+            const i = p.map((s) => s.name + s.artist).lastIndexOf(key);
+            return i < 0 ? p : p.filter((_, j) => j !== i);
+          })} />
       )}
 
       {showSpotify && <SpotifyExportModal playlist={playlist} onClose={() => setShowSpotify(false)} />}
 
       <audio ref={previewAudio} onEnded={() => setPlayingId(null)} />
+      {/* crossfade decks for the route player */}
+      <audio ref={deckA} />
+      <audio ref={deckB} />
     </div>
   );
 }
@@ -553,7 +643,7 @@ function RowBtn({ title, onClick, d, danger }) {
   );
 }
 
-function SearchOverlay({ perfectBpm, onAdd, onClose, isAdded, onRemove }) {
+function SearchOverlay({ perfectBpm, onAdd, onClose, addedCount, onRemove }) {
   const [mode, setMode] = useState("browse"); // "browse" (index) | "search" (Spotify)
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
@@ -749,7 +839,7 @@ function SearchOverlay({ perfectBpm, onAdd, onClose, isAdded, onRemove }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             {shown.map((r) => {
               const m = matchOf(r.bpm, target);
-              const added = isAdded(r.key);
+              const count = addedCount(r.key);
               return (
                 <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, overflow: "hidden", padding: 10, borderRadius: 13, background: "var(--inset)", border: "1px solid var(--border-soft)" }}>
                   <ArtTile song={r} size={52} radius={9} fontSize={16} playing={playingId === r.id} onClick={() => playPreview(r)} />
@@ -766,7 +856,7 @@ function SearchOverlay({ perfectBpm, onAdd, onClose, isAdded, onRemove }) {
                   <div style={{ minWidth: 34, textAlign: "center", padding: "3px 7px", borderRadius: 7, fontSize: 12, fontWeight: 600, color: MATCH_C[m.level], background: MATCH_BG[m.level], flexShrink: 0 }} className="mono">
                     {r.bpm === undefined ? <span className="spin" /> : r.bpm ?? "—"}
                   </div>
-                  <AddRemoveButton added={added} onAdd={() => onAdd(r)} onRemove={() => onRemove(r.key)} />
+                  <AddStepper count={count} onAdd={() => onAdd(r)} onRemove={() => onRemove(r.key)} />
                 </div>
               );
             })}
@@ -787,28 +877,28 @@ function SortBtn({ label, active, onClick }) {
   );
 }
 
-function AddRemoveButton({ added, onAdd, onRemove }) {
-  const [hover, setHover] = useState(false);
-  const base = { width: 38, height: 38, borderRadius: 10, border: "none", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" };
-  if (!added) {
+// Add a song (repeatedly). Once it's in the playlist this becomes a − N + stepper
+// so you can add duplicates or remove one copy at a time.
+function AddStepper({ count, onAdd, onRemove }) {
+  if (!count) {
     return (
       <button title="Add to playlist" onClick={(e) => { e.stopPropagation(); onAdd(); }}
-        style={{ ...base, background: "var(--accent)", color: "var(--on-accent)" }}>
+        style={{ width: 38, height: 38, borderRadius: 10, border: "none", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--accent)", color: "var(--on-accent)" }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" /></svg>
       </button>
     );
   }
-  // In the playlist → click to remove (✕ on hover).
+  const btn = { width: 30, height: 32, borderRadius: 8, border: "none", background: "transparent", color: "var(--on-green)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" };
   return (
-    <button title="Remove from playlist" onClick={(e) => { e.stopPropagation(); onRemove(); }}
-      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
-      style={{ ...base, background: hover ? "var(--bad)" : "var(--green)", color: hover ? "#fff" : "var(--on-green)" }}>
-      {hover ? (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" /></svg>
-      ) : (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4L19 6" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-      )}
-    </button>
+    <div title={`In playlist ×${count}`} style={{ display: "flex", alignItems: "center", flexShrink: 0, borderRadius: 10, background: "var(--green)", color: "var(--on-green)" }}>
+      <button title="Remove one" onClick={(e) => { e.stopPropagation(); onRemove(); }} style={btn}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" /></svg>
+      </button>
+      <span className="mono" style={{ fontSize: 12.5, fontWeight: 700, minWidth: 14, textAlign: "center" }}>{count}</span>
+      <button title="Add another" onClick={(e) => { e.stopPropagation(); onAdd(); }} style={btn}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" /></svg>
+      </button>
+    </div>
   );
 }
 
