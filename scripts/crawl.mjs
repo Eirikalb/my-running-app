@@ -22,7 +22,7 @@
 // Env: CRAWL_API_MS (default 4000), CRAWL_AUDIO_MS (default 1000),
 //      CRAWL_MAX_LIST (top songs per list artist, default 50)
 
-import { FULL_CATALOG, ROCK_BANDS, POP_ARTISTS, RAP_ARTISTS, EDM_ARTISTS, GENRE_OF } from "./seeds.mjs";
+import { FULL_CATALOG, ROCK_BANDS, POP_ARTISTS, RAP_ARTISTS, EDM_ARTISTS, METAL_ARTISTS, GENRE_OF } from "./seeds.mjs";
 import { detectBpmFromArrayBuffer } from "../lib/bpm-node.mjs";
 import { getByName, upsertTrack, stats, normKey, isCrawled, markCrawled } from "../lib/bpm-index.mjs";
 import { trackPopularity } from "../lib/deezer.mjs";
@@ -218,7 +218,7 @@ async function main() {
   } else if (args.includes("--full-only")) {
     plan = FULL_CATALOG.map((name) => ({ name, full: true }));
   } else if (args.includes("--list-only")) {
-    plan = [...ROCK_BANDS, ...POP_ARTISTS, ...RAP_ARTISTS, ...EDM_ARTISTS].map((name) => ({ name, full: false }));
+    plan = [...ROCK_BANDS, ...POP_ARTISTS, ...RAP_ARTISTS, ...EDM_ARTISTS, ...METAL_ARTISTS].map((name) => ({ name, full: false }));
   } else {
     plan = [
       ...FULL_CATALOG.map((name) => ({ name, full: true })),
@@ -226,6 +226,7 @@ async function main() {
       ...POP_ARTISTS.map((name) => ({ name, full: false })),
       ...RAP_ARTISTS.map((name) => ({ name, full: false })),
       ...EDM_ARTISTS.map((name) => ({ name, full: false })),
+      ...METAL_ARTISTS.map((name) => ({ name, full: false })),
     ];
   }
 

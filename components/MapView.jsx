@@ -60,6 +60,14 @@ export default function MapView({ points, segs, hoverSeg, theme, fitKey, dispDis
   const start = points && points.length ? points[0] : null;
   const finish = points && points.length ? points[points.length - 1] : null;
 
+  // Full route, drawn in grey under the colored song segments so the whole
+  // course is always visible — even stretches with no song assigned yet.
+  const routePositions = useMemo(
+    () => (points && points.length > 1 ? points.map((p) => [p.lat, p.lon]) : []),
+    [points]
+  );
+  const baseColor = theme === "dark" ? "rgba(232,236,243,0.42)" : "rgba(44,48,56,0.34)";
+
   return (
     <MapContainer center={center} zoom={14} style={{ height: "100%", width: "100%" }} zoomControl={false} scrollWheelZoom attributionControl>
       <ZoomControl position="topright" />
@@ -72,6 +80,11 @@ export default function MapView({ points, segs, hoverSeg, theme, fitKey, dispDis
       />
       <Resizer />
       <FitBounds points={points} fitKey={fitKey} />
+
+      {routePositions.length > 1 && (
+        <Polyline positions={routePositions} interactive={false}
+          pathOptions={{ color: baseColor, weight: 4, opacity: 1, lineCap: "round", lineJoin: "round" }} />
+      )}
 
       {segs &&
         segs.map((s) =>

@@ -132,10 +132,45 @@ export const EDM_ARTISTS = [
   "Said the Sky", "Gryffin", "Slander", "Jai Wolf", "Major Lazer", "Marshmello",
 ];
 
+// Heavy metal — 100 bands across the sub-genres: classic/NWOBHM, thrash, death,
+// black, doom/sludge, power/prog/symphonic, groove/nu, and modern metalcore.
+export const METAL_ARTISTS = [
+  // classic / NWOBHM / heavy
+  "Black Sabbath", "Judas Priest", "Iron Maiden", "Motörhead", "Dio",
+  "Ozzy Osbourne", "Saxon", "Diamond Head", "Accept", "Manowar",
+  "Mercyful Fate", "King Diamond", "Rainbow", "W.A.S.P.", "Dokken",
+  // thrash
+  "Megadeth", "Slayer", "Anthrax", "Testament", "Exodus", "Overkill",
+  "Kreator", "Sodom", "Destruction", "Sepultura", "Death Angel", "Annihilator",
+  // death
+  "Death", "Cannibal Corpse", "Morbid Angel", "Obituary", "Deicide",
+  "Entombed", "Carcass", "At the Gates", "Bolt Thrower", "Nile", "Behemoth",
+  "Suffocation", "Cattle Decapitation", "Decapitated", "Amon Amarth",
+  "Children of Bodom", "Arch Enemy", "In Flames", "Soilwork", "Dark Tranquillity",
+  // black
+  "Mayhem", "Emperor", "Darkthrone", "Immortal", "Bathory", "Dimmu Borgir",
+  "Satyricon", "Watain", "Gorgoroth", "Marduk",
+  // doom / sludge / stoner
+  "Candlemass", "Electric Wizard", "Sleep", "Kyuss", "Saint Vitus", "Down",
+  "Crowbar", "Pentagram",
+  // power / prog / symphonic
+  "Helloween", "Blind Guardian", "Gamma Ray", "Stratovarius", "Sonata Arctica",
+  "Nightwish", "Symphony X", "Dream Theater", "Queensrÿche", "Fates Warning",
+  "Kamelot", "DragonForce", "HammerFall", "Sabaton", "Powerwolf", "Epica",
+  "Within Temptation", "Therion", "Angra", "Avantasia",
+  // groove / nu / industrial
+  "Machine Head", "DevilDriver", "Fear Factory", "Soulfly", "Static-X",
+  "Mudvayne", "Sevendust", "Five Finger Death Punch", "Rob Zombie", "Ministry",
+  // modern / metalcore / tech
+  "As I Lay Dying", "August Burns Red", "Unearth", "The Black Dahlia Murder",
+  "Whitechapel", "Meshuggah", "Periphery", "Animals as Leaders",
+];
+
 // Genre tag stored on each crawled track (the artist's bucket, not iTunes' tag).
 export const GENRE_OF = {};
 for (const a of [...FULL_CATALOG, ...ROCK_BANDS]) GENRE_OF[a] = "rock";
 for (const a of POP_ARTISTS) GENRE_OF[a] = "pop";
 for (const a of RAP_ARTISTS) GENRE_OF[a] = "rap";
 for (const a of EDM_ARTISTS) GENRE_OF[a] = "edm";
+for (const a of METAL_ARTISTS) GENRE_OF[a] = "metal"; // override: e.g. Black Sabbath → metal, not rock
 GENRE_OF["Eminem"] = "rap"; // full-catalog, but a rap artist not a rock band
