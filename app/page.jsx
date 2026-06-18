@@ -52,6 +52,8 @@ export default function Page() {
   const [showSearch, setShowSearch] = useState(false);
   const [playingId, setPlayingId] = useState(null);
   const [fitKey, setFitKey] = useState(0);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showSpotify, setShowSpotify] = useState(false);
 
   const fileRef = useRef(null);
   const importRef = useRef(null);
@@ -243,20 +245,6 @@ export default function Page() {
     const a = document.createElement("a"); a.href = url; a.download = name; a.click();
     URL.revokeObjectURL(url);
   }
-  async function exportSpotify() {
-    const withId = playlist.filter((s) => s.spotifyId);
-    if (!withId.length) { alert("No Spotify track IDs yet — add songs from search."); return; }
-    const uris = withId.map((s) => `spotify:track:${s.spotifyId}`).join("\n");
-    const skipped = playlist.length - withId.length;
-    const note = skipped ? `\n\n(${skipped} song(s) without a Spotify ID skipped.)` : "";
-    try {
-      await navigator.clipboard.writeText(uris);
-      alert(`Copied ${withId.length} Spotify track links.\n\nIn the Spotify desktop app: create a playlist, click it, then paste (⌘V) to add them all.${note}`);
-    } catch {
-      download("spotify-tracks.txt", uris, "text/plain");
-      alert(`Saved ${withId.length} Spotify URIs to spotify-tracks.txt — paste into a Spotify playlist.${note}`);
-    }
-  }
 
   const distKm = total ? (total / 1000).toFixed(2) : "–";
   const curName = cur ? cur.song.name : "—";
@@ -305,6 +293,31 @@ export default function Page() {
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" /></svg>
               Find songs
             </button>
+
+            {/* Export — big top-right button with a download/export menu */}
+            <div style={{ position: "relative" }}>
+              <button onClick={() => setShowExportMenu((v) => !v)} title="Download or export your playlist"
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 18px", borderRadius: 12, border: "none", background: "var(--text)", color: "var(--bg)", fontSize: 14, fontWeight: 700, cursor: "pointer", boxShadow: "var(--shadow)" }}>
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M12 3v12M12 15l-4-4M12 15l4-4M5 20h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                Export
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" style={{ marginLeft: -1, opacity: 0.7 }}><path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </button>
+              {showExportMenu && (
+                <>
+                  <div onClick={() => setShowExportMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 60 }} />
+                  <div style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", zIndex: 70, width: 290, padding: 7, borderRadius: 14, background: "var(--panel)", border: "1px solid var(--border-2)", boxShadow: "0 20px 60px rgba(0,0,0,0.35)" }}>
+                    <ExportMenuItem disabled={!playlist.length}
+                      onClick={() => { setShowExportMenu(false); exportPlan(); }}
+                      title="Download race plan" sub="JSON file — route, pace & song schedule"
+                      d="M12 3v12M12 15l-4-4M12 15l4-4M5 20h14" />
+                    <ExportMenuItem disabled={!playlist.length} spotify
+                      onClick={() => { setShowExportMenu(false); setShowSpotify(true); }}
+                      title="Export to Spotify" sub="Step-by-step guide with screenshots"
+                      d="M12 2a10 10 0 100 20 10 10 0 000-20zM7.5 9.6c3-0.9 6.2-0.6 8.7 0.9M8 12.7c2.3-0.7 4.8-0.4 6.8 0.8M8.4 15.6c1.7-0.5 3.6-0.3 5.1 0.6" />
+                  </div>
+                </>
+              )}
+            </div>
           </div>
           <input ref={fileRef} type="file" accept=".gpx,application/gpx+xml,.json,application/json" onChange={(e) => { handleRouteFile(e.target.files[0]); e.target.value = ""; }} style={{ display: "none" }} />
           <input ref={importRef} type="file" accept=".json,application/json" onChange={(e) => { handleRouteFile(e.target.files[0]); e.target.value = ""; }} style={{ display: "none" }} />
@@ -423,7 +436,7 @@ export default function Page() {
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <RailIcon title="Import plan (.json)" onClick={() => importRef.current?.click()} d="M12 16V4M12 16l-5-5M12 16l5-5M5 20h14" />
                 <RailIcon title="Export race plan" onClick={exportPlan} disabled={!playlist.length} d="M12 4v12M12 4L7 9M12 4l5 5M5 20h14" />
-                <RailIcon title="Export to Spotify" onClick={exportSpotify} disabled={!playlist.length} d="M4 12h16M14 6l6 6-6 6" />
+                <RailIcon title="Export to Spotify" onClick={() => setShowSpotify(true)} disabled={!playlist.length} d="M4 12h16M14 6l6 6-6 6" />
                 <button onClick={() => setShowSearch(true)} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 8, border: "1px solid var(--border-2)", background: "transparent", color: "var(--accent)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" /></svg>
                   Add
@@ -481,6 +494,8 @@ export default function Page() {
           isAdded={(key) => playlist.some((s) => s.name + s.artist === key)}
           onRemove={(key) => setPlaylist((p) => p.filter((s) => s.name + s.artist !== key))} />
       )}
+
+      {showSpotify && <SpotifyExportModal playlist={playlist} onClose={() => setShowSpotify(false)} />}
 
       <audio ref={previewAudio} onEnded={() => setPlayingId(null)} />
     </div>
@@ -794,6 +809,178 @@ function AddRemoveButton({ added, onAdd, onRemove }) {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4L19 6" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
       )}
     </button>
+  );
+}
+
+function ExportMenuItem({ title, sub, d, onClick, disabled, spotify }) {
+  return (
+    <button onClick={onClick} disabled={disabled}
+      onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.background = "var(--hover)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+      style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "11px 12px", borderRadius: 10, border: "none", background: "transparent", textAlign: "left", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.4 : 1 }}>
+      <span style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: spotify ? "#1DB954" : "var(--inset)", color: spotify ? "#fff" : "var(--text)" }}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d={d} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </span>
+      <span style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
+        <span style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text)" }}>{title}</span>
+        <span style={{ fontSize: 11.5, color: "var(--muted)" }}>{sub}</span>
+      </span>
+    </button>
+  );
+}
+
+function Kbd({ children }) {
+  return <kbd className="mono" style={{ fontSize: 11.5, padding: "2px 6px", borderRadius: 5, background: "var(--inset)", border: "1px solid var(--border-2)" }}>{children}</kbd>;
+}
+
+function Shot({ src, alt, caption }) {
+  return (
+    <div style={{ marginTop: 6 }}>
+      <a href={src} target="_blank" rel="noreferrer" title="Click to enlarge" style={{ display: "block" }}>
+        <img src={src} alt={alt || ""} style={{ display: "block", margin: "0 auto", maxWidth: "100%", maxHeight: 480, borderRadius: 12, border: "1px solid var(--border)" }} />
+      </a>
+      {caption && <span style={{ fontSize: 12.5, color: "var(--muted)", display: "block", marginTop: 9, textAlign: "center" }}>{caption}</span>}
+    </div>
+  );
+}
+
+function SpotifyExportModal({ playlist, onClose }) {
+  const [step, setStep] = useState(1);
+  const [state, setState] = useState("idle"); // idle | working | done | error
+  const [result, setResult] = useState(null); // { matched, total }
+  const [method, setMethod] = useState("clipboard"); // clipboard | file
+  const [links, setLinks] = useState("");
+  const [unmatched, setUnmatched] = useState([]);
+  const dialogRef = useRef(null);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    const t = setTimeout(() => dialogRef.current?.focus(), 30);
+    return () => { window.removeEventListener("keydown", onKey); clearTimeout(t); };
+  }, [onClose]);
+
+  async function copy() {
+    setState("working");
+    try {
+      const r = await fetch("/api/spotify/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tracks: playlist.map((s) => ({ title: s.name, artist: s.artist, spotifyId: s.spotifyId || null })) }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.uris?.length) throw new Error(d.error || "No tracks could be matched on Spotify.");
+      const text = d.uris.join("\n");
+      setLinks(text);
+      setUnmatched(d.unmatched || []);
+      let m = "clipboard";
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        m = "file";
+        const blob = new Blob([text], { type: "text/plain" });
+        const u = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href = u; a.download = "spotify-tracks.txt"; a.click();
+        URL.revokeObjectURL(u);
+      }
+      setMethod(m);
+      setResult({ matched: d.matched, total: d.total });
+      setState("done");
+    } catch {
+      setState("error");
+    }
+  }
+
+  const next = () => (step < 3 ? setStep(step + 1) : onClose());
+  const back = () => setStep((s) => Math.max(1, s - 1));
+  const nextLocked = step === 1 && state !== "done";
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1100, background: "var(--backdrop)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 24px", overflowY: "auto" }}>
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="spotify-export-title" onClick={(e) => e.stopPropagation()}
+        style={{ width: "100%", maxWidth: 780, borderRadius: 20, border: "1px solid var(--border-2)", background: "var(--panel)", boxShadow: "0 40px 120px rgba(0,0,0,0.45)", overflow: "hidden", outline: "none" }}>
+        {/* header */}
+        <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "20px 28px 14px" }}>
+          <span style={{ width: 38, height: 38, borderRadius: 11, background: "#1DB954", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zM7.5 9.6c3-.9 6.2-.6 8.7.9M8 12.7c2.3-.7 4.8-.4 6.8.8M8.4 15.6c1.7-.5 3.6-.3 5.1.6" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" /></svg>
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div id="spotify-export-title" style={{ fontSize: 16, fontWeight: 700 }}>Export to Spotify</div>
+            <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>Step {step} of 3 · {playlist.length} song{playlist.length === 1 ? "" : "s"}</div>
+          </div>
+          <button className="iconbtn btn-hover" onClick={onClose} aria-label="Close" style={{ width: 36, height: 36, borderRadius: 10 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /></svg>
+          </button>
+        </div>
+        {/* progress */}
+        <div style={{ display: "flex", gap: 6, padding: "0 28px" }}>
+          {[1, 2, 3].map((i) => (
+            <div key={i} style={{ flex: 1, height: 4, borderRadius: 2, background: i <= step ? "var(--accent)" : "var(--inset)", transition: "background .25s" }} />
+          ))}
+        </div>
+        {/* persistent prerequisite */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "16px 28px 0", padding: "9px 13px", borderRadius: 9, background: "var(--warn-bg)", border: "1px solid var(--warn)" }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, color: "var(--warn)" }}><rect x="3" y="4" width="18" height="13" rx="2" stroke="currentColor" strokeWidth="2" /><path d="M8 21h8M12 17v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+          <span style={{ fontSize: 12, color: "var(--text)" }}>Use the <strong>Spotify desktop app</strong> — pasting doesn’t work on web or phone.</span>
+        </div>
+        {/* step body */}
+        <div style={{ padding: "18px 28px 8px", minHeight: 300, display: "flex", flexDirection: "column", gap: 10 }}>
+          {step === 1 && (
+            <>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Copy the playlist</div>
+              <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)", lineHeight: 1.5 }}>
+                We’ll copy all {playlist.length} songs to your clipboard as Spotify links. Next you’ll paste them into Spotify in two clicks.
+              </p>
+              <button onClick={copy} disabled={state === "working"} style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 8, marginTop: 4, padding: "11px 18px", borderRadius: 10, border: "none", background: state === "done" ? "var(--green)" : state === "error" ? "var(--bad)" : "#1DB954", color: "#fff", fontSize: 14, fontWeight: 700, cursor: state === "working" ? "default" : "pointer" }}>
+                {state === "working" ? <><span className="spin" /> Finding tracks…</> : state === "done" ? (method === "file" ? "Saved ✓" : "Copied ✓") : state === "error" ? "Try again" : `Copy ${playlist.length} songs`}
+              </button>
+              {state === "done" && result && (
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text-2)" }}>
+                  {method === "file" ? "Saved as a file (couldn’t copy automatically). " : "Copied to your clipboard! "}Hit <strong>Next →</strong>
+                </span>
+              )}
+              {state === "done" && result && result.matched < result.total && (
+                <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+                  Matched {result.matched} of {result.total}.{unmatched.length > 0 && <> Add manually: {unmatched.slice(0, 6).map((u) => `${u.artist} – ${u.title}`).join("; ")}{unmatched.length > 6 ? ` +${unmatched.length - 6} more` : ""}.</>}
+                </span>
+              )}
+              {state === "done" && method === "file" && (
+                <textarea readOnly value={links} onClick={(e) => e.currentTarget.select()}
+                  style={{ width: "100%", height: 52, fontSize: 11, fontFamily: "'IBM Plex Mono'", padding: 8, borderRadius: 8, border: "1px solid var(--border-2)", background: "var(--inset)", color: "var(--text-2)", resize: "vertical" }} />
+              )}
+              {state === "error" && <span style={{ fontSize: 12, color: "var(--bad)" }}>Couldn’t reach Spotify — check the connection and retry.</span>}
+            </>
+          )}
+          {step === 2 && (
+            <>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Make an empty playlist</div>
+              <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)", lineHeight: 1.5 }}>
+                In Spotify’s left sidebar, click <strong>Create</strong> (the <strong>＋ / New&nbsp;playlist</strong> button) and choose the first option, <strong>Playlist</strong> — your Spotify may show it in another language.
+              </p>
+              <Shot src="/tutorial/spotify-create.gif" alt="Opening Spotify's Create menu and choosing Playlist" caption="The first option (here “Spilleliste”) is Playlist. Avoid Blend / Folder / Jam." />
+            </>
+          )}
+          {step === 3 && (
+            <>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Paste them in</div>
+              <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)", lineHeight: 1.5 }}>
+                In your new playlist, click the empty song area (<strong>not</strong> the search box), then press <Kbd>⌘ V</Kbd> (<Kbd>Ctrl V</Kbd>). Every song drops in at once. <span style={{ color: "var(--muted)" }}>If the links land in the search bar, click the empty list and paste again.</span>
+              </p>
+              <Shot src="/tutorial/spotify-paste.gif" alt="Pasting in the new playlist — every song fills in at once" />
+            </>
+          )}
+        </div>
+        {/* footer nav */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 28px", borderTop: "1px solid var(--border)" }}>
+          <button onClick={back} style={{ visibility: step === 1 ? "hidden" : "visible", display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: "1px solid var(--border-2)", background: "transparent", color: "var(--text-2)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+            ← Back
+          </button>
+          <button onClick={next} disabled={nextLocked} title={nextLocked ? "Copy your songs first" : undefined} style={{ display: "flex", alignItems: "center", gap: 7, padding: "10px 18px", borderRadius: 10, border: "none", background: "var(--accent)", color: "var(--on-accent)", fontSize: 13.5, fontWeight: 700, cursor: nextLocked ? "not-allowed" : "pointer", opacity: nextLocked ? 0.45 : 1 }}>
+            {step < 3 ? "Next →" : "Done"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
